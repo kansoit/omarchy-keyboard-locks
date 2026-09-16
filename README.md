@@ -60,6 +60,7 @@ Caps Lock raises no Hyprland event, so the widget:
 
 - Requires Hyprland with the Lua config provider (the default on Omarchy), because bind registration uses `hyprctl eval`.
 - Clicking the dot to toggle caps is intentionally **not** included in v1: Hyprland's synthetic key events (`send_key_state`/`send_shortcut`) do not flip the per-keyboard Lock state that this indicator reads, so a toggle feature would be unreliable. The dot is display-only.
+- Caps Lock is per-keyboard: with several keyboards connected, the widget reads the one being typed on. It identifies it by detecting which keyboard toggled caps lock between polls (or from an `activelayout` event when a layout switch happens), and falls back to the first real keyboard otherwise.
 
 ## Development
 

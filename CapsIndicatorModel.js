@@ -20,10 +20,39 @@ function invalidate() {
   _attempt++
 }
 
+// Hyprland's activelayout event pairs the keyboard that switched with the layout
+// it moved to, and a switch always names the keyboard being typed on, so tracking
+// it tells the widget which of several connected keyboards to read. Quickshell
+// cuts the event into that many fields, so a description carrying a comma of its
+// own stays in one piece; a binding old enough to hand back only the raw string
+// gets split by hand. The virtual keyboard fcitx5 binds to inject announces
+// switches too, and names a keyboard nobody types on.
+function eventKeyboardName(event) {
+  var parts
+
+  try {
+    if (event && event.parse) parts = event.parse(2)
+  } catch (error) {
+  }
+
+  if (!parts) parts = String(event && event.data ? event.data : "").split(",")
+
+  var name = String(parts[0] || "")
+  return name.indexOf("hl-virtual-keyboard") === 0 ? "" : name
+}
+
 // Try to take the single registration slot for the current attempt. Returns
 // true exactly once per attempt.
 function claimRegistration() {
   if (_claimed === _attempt) return false
   _claimed = _attempt
   return true
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    invalidate: invalidate,
+    claimRegistration: claimRegistration,
+    eventKeyboardName: eventKeyboardName
+  }
 }

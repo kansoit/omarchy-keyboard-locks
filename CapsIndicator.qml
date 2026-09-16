@@ -20,6 +20,17 @@ BarWidget {
   // The Lock modifier of the keyboard the dot reads.
   property bool capsLock: false
 
+  // Which keyboard the seat is actively typing on. Updated either by an
+  // activelayout event (layout switch) or by detecting which keyboard toggled
+  // its capsLock between two successive polls — the board that just changed is
+  // the one the user is pressing. Caps Lock is per-keyboard, so the dot must
+  // read the right device when there is more than one on the seat.
+  property string typedKeyboardName: ""
+
+  // Previous caps state per keyboard name, used to detect which keyboard just
+  // toggled between successive 500 ms standby polls.
+  property var _prevCapsState: ({})
+
   // ---- Settings editing. Left-clicking the dot opens a small editor for the
   //      schema settings; changes are written back to shell.json the same way
   //      the built-in widgets do (updateEntryInline), applied locally first so
@@ -91,9 +102,36 @@ BarWidget {
 
   // The seat also lists devices that are not keyboards (radio controls, hotkey
   // arrays, HID event sinks), and they never receive key events, so reading the
-  // Lock modifier from one would keep the dot stuck. Prefer a device whose name
+  // Lock modifier from one would keep the dot stuck. Prefer the keyboard the seat
+  // is actively typing on; if one is not yet known, prefer a device whose name
   // says keyboard when one is present.
   function capsKeyboard(typed) {
+    // activelayout names the keyboard being typed on, settling a seat with two
+    // keyboards outright.
+    var named = typed.find(function (k) { return k.name === root.typedKeyboardName })
+    if (named) return named
+
+    // When the keyboard has not been identified yet but exactly one real
+    // keyboard reports capsLock on, use it directly — it is almost certainly
+    // the one the user is pressing.
+    if (!root.typedKeyboardName) {
+      var capsOnOnly = null
+      var capsCount = 0
+      for (var i = 0; i < typed.length; i++) {
+        var k = typed[i]
+        if (!k || !k.name || !/keyboard/i.test(String(k.name || ""))) continue
+        if (k.capsLock === true) { capsCount++; capsOnOnly = k }
+      }
+      if (capsCount === 1 && capsOnOnly) return capsOnOnly
+    }
+
+    // The fcitx5 virtual keyboard can hold the main flag without ever being typed
+    // on, but a real keyboard marked main is a strong fallback.
+    var main = typed.find(function (k) {
+      return k.main === true && !/hl-virtual-keyboard/.test(String(k.name || ""))
+    })
+    if (main) return main
+
     var kb = typed.find(function (k) {
       return /keyboard/i.test(String(k.name || ""))
     })
@@ -184,6 +222,12 @@ BarWidget {
     function onRawEvent(event) {
       if (!event || !event.name) return
       var name = String(event.name)
+      // A switch always names the keyboard being typed on, so the dot knows
+      // which device to read when the seat holds more than one.
+      if (name === "activelayout") {
+        const named = CapsIndicatorModel.eventKeyboardName(event)
+        if (named) root.typedKeyboardName = named
+      }
       // A reload wipes runtime binds, so re-assert the refresh bind, and re-read
       // the keyboard just in case the reload reset xkb state.
       if (name === "configreloaded") {
@@ -216,7 +260,34 @@ BarWidget {
         }
         if (!Array.isArray(listed)) return
 
-        const kb = root.capsKeyboard(root.typedKeyboards(listed))
+        const typed = root.typedKeyboards(listed)
+
+        // Detect which keyboard just toggled its caps lock between polls.
+        // The board that changed is the one the user is actually pressing,
+        // so use it as the authoritative source from now on.
+        var changed = null
+        var prev = root._prevCapsState || {}
+        for (var i = 0; i < typed.length; i++) {
+          var k = typed[i]
+          if (!k || !k.name) continue
+          var now = k.capsLock === true
+          var before = prev[k.name]
+          if (before !== undefined && before !== now) { changed = k; break }
+        }
+
+        // Build the new snapshot of per-keyboard caps states for the next poll.
+        var next = {}
+        for (var j = 0; j < typed.length; j++) {
+          var kb2 = typed[j]
+          if (kb2 && kb2.name) next[kb2.name] = kb2.capsLock === true
+        }
+        root._prevCapsState = next
+
+        // If a real keyboard toggled, that's the one being typed on.
+        if (changed && !/hl-virtual-keyboard/.test(String(changed.name || "")))
+          root.typedKeyboardName = changed.name
+
+        const kb = root.capsKeyboard(typed)
         if (!kb) return
         root.capsLock = kb.capsLock === true
       }
