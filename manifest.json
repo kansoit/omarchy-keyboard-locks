@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "mero.caps-indicator",
+  "name": "Caps lock indicator",
+  "version": "1.0.0",
+  "author": "Mero J.",
+  "description": "A dot that lights up while Caps Lock is on",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "CapsIndicator.qml"
+  },
+  "barWidget": {
+    "displayName": "Caps lock indicator",
+    "description": "A small dot that lights up while Caps Lock is on. Refreshes instantly via a self-registered Caps_Lock bind and falls back to a light poll.",
+    "category": "Status",
+    "allowMultiple": true,
+    "schema": [
+      {
+        "key": "dotColor",
+        "type": "string",
+        "label": "Dot color",
+        "description": "Color of the dot while Caps Lock is on. Leave \"auto\" to use the bar's active (urgent) color. Any CSS color, e.g. #ff4444.",
+        "defaultValue": "auto"
+      },
+      {
+        "key": "dotSize",
+        "type": "integer",
+        "label": "Dot size",
+        "description": "Diameter of the dot in pixels.",
+        "defaultValue": 6,
+        "minimum": 2,
+        "maximum": 24
+      },
+      {
+        "key": "hideWhenOff",
+        "type": "boolean",
+        "label": "Hide when off",
+        "description": "Hide the dot completely while Caps Lock is off instead of showing it dimmed.",
+        "defaultValue": false
+      },
+      {
+        "key": "dimOpacity",
+        "type": "integer",
+        "label": "Dim opacity (%)",
+        "description": "Brightness of the dot while Caps Lock is off, from 0 to 100.",
+        "defaultValue": 35,
+        "minimum": 0,
+        "maximum": 100
+      }
+    ]
+  }
+}
