@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Ui
 import qs.Commons
 import "CapsIndicatorModel.js" as CapsIndicatorModel
@@ -65,7 +66,10 @@ BarWidget {
   // target covers the point; implementing triggerPress turns the whole dot slot
   // into a button, same contract the built-in widgets use.
   function triggerPress(button) {
-    if (button === Qt.LeftButton) settingsCard.open = !settingsCard.open
+    if (button === Qt.LeftButton) {
+      if (settingsCard.open) settingsCard.closeCard()
+      else settingsCard.openCard()
+    }
   }
 
   // Render options, every one of which the schema gives a default. These read
@@ -217,7 +221,10 @@ BarWidget {
   IpcHandler {
     target: root.moduleName
     function refresh(): void { root.pressRefresh() }
-    function toggleCard(): void { settingsCard.open = !settingsCard.open }
+    function toggleCard(): void {
+      if (settingsCard.open) settingsCard.closeCard()
+      else settingsCard.openCard()
+    }
   }
 
   Component.onCompleted: {
@@ -243,15 +250,6 @@ BarWidget {
         root.ensureBindAdded()
         root.refresh()
       }
-    }
-  }
-
-  // Give the color field keyboard focus as soon as the settings card opens.
-  Connections {
-    target: settingsCard
-    function onOpenChanged() {
-      if (settingsCard.open)
-        Qt.callLater(() => colorField.forceActiveFocus())
     }
   }
 
@@ -379,106 +377,189 @@ BarWidget {
     }
   }
 
-  // ---- Settings card. Anchored to the dot, opened by the click above; clicks
-  //      outside the card dismiss it (PopupCard's focus grab).
-  PopupCard {
+  // ---- Settings card. A full-screen overlay panel: a popup window anchored to
+  //      the (non-keyboard-focusable) bar can never receive key events, so the
+  //      color field couldn't be typed into. Exclusive keyboard focus — the same
+  //      trick the reminders flow and KeyboardPanel use — delivers keys here.
+  //      Clicking the scrim (or Escape) closes it.
+  PanelWindow {
     id: settingsCard
-    bar: root.bar
-    anchorItem: dotSlot
-    contentWidth: Style.space(320)
-    contentHeight: settingsList.implicitHeight + settingsCard.verticalContentInset
+    visible: open
+    color: "transparent"
+    property bool open: false
 
-    // The bar itself is not keyboard-focusable, so a popup anchored to it would
-    // never receive keys. Grab focus when the card opens so the color field can
-    // accept typing.
-    grabFocus: true
+    anchors {
+      top: true
+      bottom: true
+      left: true
+      right: true
+    }
+    WlrLayershell.namespace: "mero-caps-indicator-settings"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    exclusionMode: ExclusionMode.Ignore
 
-    ColumnLayout {
-      id: settingsList
-      width: settingsCard.contentWidth - settingsCard.padding * 2
-        - Border.left(settingsCard.borderSpec) - Border.right(settingsCard.borderSpec)
-      spacing: Style.spacing.controlGap
+    function openCard() {
+      if (root.bar && typeof root.bar.requestPopout === "function")
+        root.bar.requestPopout(settingsCard)
+      open = true
+      Qt.callLater(function() { colorField.forceActiveFocus() })
+    }
 
-      RowLayout {
-        Layout.fillWidth: true
+    function closeCard() {
+      open = false
+      if (root.bar && typeof root.bar.releasePopout === "function")
+        root.bar.releasePopout(settingsCard)
+    }
 
-        Text {
-          text: "Caps indicator"
-          color: Color.foreground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          font.bold: true
-          font.letterSpacing: 1.5
-        }
+    // The bar closes the previous popup when another one opens.
+    function closeForPopoutSwitch() { closeCard() }
+    function close() { closeCard() }
 
-        Item { Layout.fillWidth: true }
+    // Click anywhere outside the card to dismiss it.
+    MouseArea {
+      anchors.fill: parent
+      onClicked: settingsCard.closeCard()
+    }
 
-        Button {
-          text: "Reset"
-          fontSize: Style.font.caption
-          tooltipText: "Restore all default settings"
-          onClicked: root.resetSettings()
-        }
-      }
+    BorderSurface {
+      id: card
+      width: Style.space(320)
+      height: Math.min(settingsList.implicitHeight + card.contentTopInset + card.contentBottomInset,
+                       settingsCard.height - Style.gapsOut * 2)
+      anchors.centerIn: parent
+      color: Color.popups.background
+      borderSpec: Border.localOrSurfaceSpec("popups", "border", Color.popups.border, Color.popups.border, Math.max(1, Style.space(2)))
+      padding: Style.spacing.popupPadding
+      radius: Style.cornerRadius
 
-      PanelSeparator { Layout.fillWidth: true }
+      // Swallow card clicks so the dismiss MouseArea can't reach them.
+      MouseArea { anchors.fill: parent; onClicked: {} }
 
       ColumnLayout {
-        Layout.fillWidth: true
+        id: settingsList
+        anchors.fill: parent
+        anchors.topMargin: card.contentTopInset
+        anchors.rightMargin: card.contentRightInset
+        anchors.bottomMargin: card.contentBottomInset
+        anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.controlGap
 
         RowLayout {
           Layout.fillWidth: true
-          spacing: Style.spacing.lg
 
           Text {
-            Layout.minimumWidth: Style.space(108)
-            text: "Dot color"
+            text: "Caps indicator"
             color: Color.foreground
             font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            font.letterSpacing: 1.5
+          }
+
+          Item { Layout.fillWidth: true }
+
+          Button {
+            text: "Reset"
+            fontSize: Style.font.caption
+            tooltipText: "Restore all default settings"
+            onClicked: root.resetSettings()
+          }
+        }
+
+        PanelSeparator { Layout.fillWidth: true }
+
+        ColumnLayout {
+          Layout.fillWidth: true
+          spacing: Style.spacing.controlGap
+
+          RowLayout {
+            Layout.fillWidth: true
+            spacing: Style.spacing.lg
+
+            Text {
+              Layout.minimumWidth: Style.space(108)
+              text: "Dot color"
+              color: Color.foreground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+            }
+
+            RowLayout {
+              id: swatchRow
+              spacing: Style.spacing.sm
+
+              Repeater {
+                model: [
+                  { value: "auto", color: root.bar ? root.bar.urgent : Color.urgent },
+                  { value: "#ef4444", color: "#ef4444" },
+                  { value: "#f59e0b", color: "#f59e0b" },
+                  { value: "#22c55e", color: "#22c55e" },
+                  { value: "#3b82f6", color: "#3b82f6" },
+                  { value: "#a855f7", color: "#a855f7" },
+                  { value: "#ec4899", color: "#ec4899" }
+                ]
+
+                Rectangle {
+                  required property var modelData
+                  width: Style.space(20)
+                  height: Style.space(20)
+                  radius: width / 2
+                  color: modelData.color
+                  border.width: 1
+                  border.color: Qt.color("black")
+                  opacity: root.dotColorValue === modelData.value ? 1 : 0.55
+                  scale: root.dotColorValue === modelData.value ? 1.15 : 1
+
+                  Rectangle {
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: 2
+                    border.color: root.dotColorValue === modelData.value ? Color.accent : "transparent"
+                    visible: root.dotColorValue === modelData.value
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    onClicked: root.commitSettings({ dotColor: modelData.value })
+                    hoverEnabled: true
+                  }
+                }
+              }
+            }
           }
 
           RowLayout {
-            id: swatchRow
+            Layout.fillWidth: true
             spacing: Style.spacing.sm
 
-            Repeater {
-              model: [
-                { value: "auto", color: root.bar ? root.bar.urgent : Color.urgent },
-                { value: "#ef4444", color: "#ef4444" },
-                { value: "#f59e0b", color: "#f59e0b" },
-                { value: "#22c55e", color: "#22c55e" },
-                { value: "#3b82f6", color: "#3b82f6" },
-                { value: "#a855f7", color: "#a855f7" },
-                { value: "#ec4899", color: "#ec4899" }
-              ]
+            Rectangle {
+              Layout.preferredWidth: Style.space(20)
+              Layout.preferredHeight: Style.space(20)
+              radius: width / 2
+              border.width: 1
+              border.color: Qt.color("#55000000")
+              color: root.dotColorValue === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : root.dotColorValue
+            }
 
-              Rectangle {
-                required property var modelData
-                width: Style.space(20)
-                height: Style.space(20)
-                radius: width / 2
-                color: modelData.color
-                border.width: 1
-                border.color: Qt.color("black")
-                opacity: root.dotColorValue === modelData.value ? 1 : 0.55
-                scale: root.dotColorValue === modelData.value ? 1.15 : 1
+            TextField {
+              id: colorField
+              Layout.fillWidth: true
+              text: root.dotColorValue
+              placeholderText: "auto or #rrggbb"
+              horizontalAlignment: Text.AlignHCenter
+              onTextChanged: {
+                if (activeFocus && text !== root.dotColorValue)
+                  root.commitSettingsLocal({ dotColor: text })
+              }
+              onEditingFinished: root.commitSettings({ dotColor: text.trim() })
 
-                Rectangle {
-                  anchors.fill: parent
-                  radius: width / 2
-                  color: "transparent"
-                  border.width: 2
-                  border.color: root.dotColorValue === modelData.value ? Color.accent : "transparent"
-                  visible: root.dotColorValue === modelData.value
-                }
-
-                MouseArea {
-                  anchors.fill: parent
-                  onClicked: root.commitSettings({ dotColor: modelData.value })
-                  hoverEnabled: true
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  settingsCard.closeCard()
+                  event.accepted = true
                 }
               }
             }
@@ -487,120 +568,93 @@ BarWidget {
 
         RowLayout {
           Layout.fillWidth: true
-          spacing: Style.spacing.sm
+          spacing: Style.spacing.lg
 
-          Rectangle {
-            Layout.preferredWidth: Style.space(20)
-            Layout.preferredHeight: Style.space(20)
-            radius: width / 2
-            border.width: 1
-            border.color: Qt.color("#55000000")
-            color: root.dotColorValue === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : root.dotColorValue
+          Text {
+            Layout.minimumWidth: Style.space(108)
+            text: "Dot size"
+            color: Color.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            elide: Text.ElideRight
           }
 
-          TextField {
-            id: colorField
+          Text {
+            Layout.preferredWidth: Style.space(28)
+            text: String(root.dotDiameterValue)
+            color: Color.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            horizontalAlignment: Text.AlignRight
+          }
+
+          PanelSlider {
+            id: sizeSlider
             Layout.fillWidth: true
-            text: root.dotColorValue
-            placeholderText: "auto or #rrggbb"
-            horizontalAlignment: Text.AlignHCenter
-            onTextChanged: {
-              if (activeFocus && text !== root.dotColorValue)
-                root.commitSettingsLocal({ dotColor: text })
-            }
-            onEditingFinished: root.commitSettings({ dotColor: text.trim() })
+            bar: root.bar
+            minimum: 2
+            maximum: 24
+            step: 1
+            integer: true
+            value: root.dotDiameterValue
+            onMoved: function(v) { root.commitSettings({ dotSize: Math.round(v) }) }
           }
         }
-      }
 
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: Style.spacing.lg
-
-        Text {
-          Layout.minimumWidth: Style.space(108)
-          text: "Dot size"
-          color: Color.foreground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
-          elide: Text.ElideRight
-        }
-
-        Text {
-          Layout.preferredWidth: Style.space(28)
-          text: String(root.dotDiameterValue)
-          color: Color.foreground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
-          horizontalAlignment: Text.AlignRight
-        }
-
-        PanelSlider {
-          id: sizeSlider
+        RowLayout {
           Layout.fillWidth: true
-          bar: root.bar
-          minimum: 2
-          maximum: 24
-          step: 1
-          integer: true
-          value: root.dotDiameterValue
-          onMoved: function(v) { root.commitSettings({ dotSize: Math.round(v) }) }
+          spacing: Style.spacing.lg
+
+          Text {
+            Layout.minimumWidth: Style.space(108)
+            text: "Dim at rest (%)"
+            color: Color.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            elide: Text.ElideRight
+          }
+
+          Text {
+            Layout.preferredWidth: Style.space(28)
+            text: String(root.dimOpacityValue)
+            color: Color.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            horizontalAlignment: Text.AlignRight
+          }
+
+          PanelSlider {
+            id: dimSlider
+            Layout.fillWidth: true
+            bar: root.bar
+            minimum: 0
+            maximum: 100
+            step: 1
+            integer: true
+            value: root.dimOpacityValue
+            onMoved: function(v) { root.commitSettings({ dimOpacity: Math.round(v) }) }
+          }
         }
-      }
 
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: Style.spacing.lg
-
-        Text {
-          Layout.minimumWidth: Style.space(108)
-          text: "Dim at rest (%)"
-          color: Color.foreground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
-          elide: Text.ElideRight
-        }
-
-        Text {
-          Layout.preferredWidth: Style.space(28)
-          text: String(root.dimOpacityValue)
-          color: Color.foreground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
-          horizontalAlignment: Text.AlignRight
-        }
-
-        PanelSlider {
-          id: dimSlider
+        RowLayout {
           Layout.fillWidth: true
-          bar: root.bar
-          minimum: 0
-          maximum: 100
-          step: 1
-          integer: true
-          value: root.dimOpacityValue
-          onMoved: function(v) { root.commitSettings({ dimOpacity: Math.round(v) }) }
-        }
-      }
+          spacing: Style.spacing.lg
 
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: Style.spacing.lg
+          Text {
+            Layout.minimumWidth: Style.space(108)
+            text: "Hide when off"
+            color: Color.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            elide: Text.ElideRight
+          }
 
-        Text {
-          Layout.minimumWidth: Style.space(108)
-          text: "Hide when off"
-          color: Color.foreground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
-          elide: Text.ElideRight
-        }
+          Item { Layout.fillWidth: true }
 
-        Item { Layout.fillWidth: true }
-
-        ToggleSwitch {
-          checked: root.hideWhenOffValue
-          onToggled: root.commitSettings({ hideWhenOff: !root.hideWhenOffValue })
+          ToggleSwitch {
+            checked: root.hideWhenOffValue
+            onToggled: root.commitSettings({ hideWhenOff: !root.hideWhenOffValue })
+          }
         }
       }
     }
