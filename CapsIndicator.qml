@@ -3,7 +3,6 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Wayland
 import qs.Ui
 import qs.Commons
 import "CapsIndicatorModel.js" as CapsIndicatorModel
@@ -247,6 +246,15 @@ BarWidget {
     }
   }
 
+  // Give the color field keyboard focus as soon as the settings card opens.
+  Connections {
+    target: settingsCard
+    function onOpenChanged() {
+      if (settingsCard.open)
+        Qt.callLater(() => colorField.forceActiveFocus())
+    }
+  }
+
   Process {
     id: queryProc
     command: ["hyprctl", "-j", "devices"]
@@ -380,10 +388,10 @@ BarWidget {
     contentWidth: Style.space(320)
     contentHeight: settingsList.implicitHeight + settingsCard.verticalContentInset
 
-    // The bar owns the keyboard (focusable: false), so popups anchored to it
-    // can't get key events without asking the layer shell. OnDemand grabs the
-    // keyboard when the card is clicked, letting the color field accept typing.
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+    // The bar itself is not keyboard-focusable, so a popup anchored to it would
+    // never receive keys. Grab focus when the card opens so the color field can
+    // accept typing.
+    grabFocus: true
 
     ColumnLayout {
       id: settingsList
@@ -594,15 +602,6 @@ BarWidget {
           checked: root.hideWhenOffValue
           onToggled: root.commitSettings({ hideWhenOff: !root.hideWhenOffValue })
         }
-      }
-    }
-
-    // Give the color field keyboard focus as soon as the card opens.
-    Connections {
-      target: settingsCard
-      function onOpenChanged() {
-        if (settingsCard.open)
-          Qt.callLater(() => colorField.forceActiveFocus())
       }
     }
   }
