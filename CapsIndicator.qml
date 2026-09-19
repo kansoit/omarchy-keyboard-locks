@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Ui
 import qs.Commons
 import "CapsIndicatorModel.js" as CapsIndicatorModel
@@ -47,6 +48,14 @@ BarWidget {
     root.settings = entry
     if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
       root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  // Applies settings to the live widget only, without touching shell.json.
+  // Used while the color field is being edited: a per-keystroke commit round-
+  // trips through the config reload and re-asserts the bound field text mid-
+  // edit, which fights freeform typing.
+  function commitSettingsLocal(changes) {
+    root.settings = root.mergedSettings(changes)
   }
 
   function resetSettings() {
@@ -371,6 +380,11 @@ BarWidget {
     contentWidth: Style.space(320)
     contentHeight: settingsList.implicitHeight + settingsCard.verticalContentInset
 
+    // The bar owns the keyboard (focusable: false), so popups anchored to it
+    // can't get key events without asking the layer shell. OnDemand grabs the
+    // keyboard when the card is clicked, letting the color field accept typing.
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
     ColumnLayout {
       id: settingsList
       width: settingsCard.contentWidth - settingsCard.padding * 2
@@ -482,7 +496,11 @@ BarWidget {
             text: root.dotColorValue
             placeholderText: "auto or #rrggbb"
             horizontalAlignment: Text.AlignHCenter
-            onTextEdited: root.commitSettings({ dotColor: text.trim() })
+            onTextChanged: {
+              if (activeFocus && text !== root.dotColorValue)
+                root.commitSettingsLocal({ dotColor: text })
+            }
+            onEditingFinished: root.commitSettings({ dotColor: text.trim() })
           }
         }
       }
@@ -576,6 +594,15 @@ BarWidget {
           checked: root.hideWhenOffValue
           onToggled: root.commitSettings({ hideWhenOff: !root.hideWhenOffValue })
         }
+      }
+    }
+
+    // Give the color field keyboard focus as soon as the card opens.
+    Connections {
+      target: settingsCard
+      function onOpenChanged() {
+        if (settingsCard.open)
+          Qt.callLater(() => colorField.forceActiveFocus())
       }
     }
   }

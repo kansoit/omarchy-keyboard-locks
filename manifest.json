@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "mero.caps-indicator",
   "name": "Caps lock indicator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Mero J.",
   "description": "A dot that lights up while Caps Lock is on",
   "kinds": [
