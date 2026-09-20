@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "mero.caps-indicator",
-  "name": "Caps lock indicator",
-  "version": "1.1.0",
-  "author": "Mero J.",
-  "description": "A dot that lights up while Caps Lock is on",
+  "id": "kansoit.keyboard-locks",
+  "name": "Keyboard lock indicators",
+  "version": "1.0.0",
+  "author": "gpt5.6-luna",
+  "description": "Indicators for Caps Lock and Num Lock across connected keyboards",
   "kinds": [
     "bar-widget"
   ],
@@ -12,42 +12,24 @@
     "barWidget": "CapsIndicator.qml"
   },
   "barWidget": {
-    "displayName": "Caps lock indicator",
-    "description": "A small dot that lights up while Caps Lock is on. Refreshes instantly via a self-registered Caps_Lock bind and falls back to a light poll.",
+    "displayName": "Keyboard lock indicators",
+    "description": "Small indicators for Caps Lock and Num Lock. A lock active on any real keyboard is shown.",
     "category": "Status",
     "allowMultiple": true,
     "schema": [
       {
-        "key": "dotColor",
+        "key": "capsColor",
         "type": "string",
-        "label": "Dot color",
-        "description": "Color of the dot while Caps Lock is on. Leave \"auto\" to use the bar's active (urgent) color. Any CSS color, e.g. #ff4444.",
+        "label": "Caps Lock color",
+        "description": "Color of the Caps Lock indicator. Leave \"auto\" to use the bar's active (urgent) color. Any CSS color, e.g. #ff4444.",
         "defaultValue": "auto"
       },
       {
-        "key": "dotSize",
-        "type": "integer",
-        "label": "Dot size",
-        "description": "Diameter of the dot in pixels.",
-        "defaultValue": 6,
-        "minimum": 2,
-        "maximum": 24
-      },
-      {
-        "key": "hideWhenOff",
-        "type": "boolean",
-        "label": "Hide when off",
-        "description": "Hide the dot completely while Caps Lock is off instead of showing it dimmed.",
-        "defaultValue": false
-      },
-      {
-        "key": "dimOpacity",
-        "type": "integer",
-        "label": "Dim opacity (%)",
-        "description": "Brightness of the dot while Caps Lock is off, from 0 to 100.",
-        "defaultValue": 35,
-        "minimum": 0,
-        "maximum": 100
+        "key": "numColor",
+        "type": "string",
+        "label": "Num Lock color",
+        "description": "Color of the Num Lock indicator. Leave \"auto\" to use the bar's active (urgent) color. Any CSS color, e.g. #ff4444.",
+        "defaultValue": "auto"
       }
     ]
   }

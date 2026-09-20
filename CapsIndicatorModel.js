@@ -1,7 +1,7 @@
 // Registration coordinator for the self-registered refresh bind.
 //
-// The widget adds its Caps_Lock bind at runtime so the dot refreshes the
-// instant caps is pressed, without the user editing any config. Hyprland
+// The widget adds its Caps_Lock and Num_Lock binds at runtime so the indicator
+// refreshes as soon as either lock is pressed, without the user editing config. Hyprland
 // clears runtime binds on every config reload, so the shell listens for
 // configreloaded and re-adds it.
 //
@@ -41,6 +41,24 @@ function eventKeyboardName(event) {
   return name.indexOf("hl-virtual-keyboard") === 0 ? "" : name
 }
 
+// Hyprland may classify receiver endpoints, mice and audio controls as
+// keyboards. Keep real typing devices while dropping those false positives.
+function isRealKeyboard(keyboard) {
+  var name = String(keyboard && keyboard.name || "").toLowerCase()
+  if (!name) return false
+  if (/hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus/.test(name)) return false
+  if (/mouse|touchpad|trackpad|m585|m590|headphone|audio|avrcp|camera|consumer-control|plantronics|ideapad-extra-buttons|sof-hda-dsp|bose/.test(name)) return false
+  return true
+}
+
+function anyLock(keyboards, property) {
+  var values = Array.isArray(keyboards) ? keyboards : []
+  for (var i = 0; i < values.length; i++) {
+    if (values[i] && values[i][property] === true) return true
+  }
+  return false
+}
+
 // Try to take the single registration slot for the current attempt. Returns
 // true exactly once per attempt.
 function claimRegistration() {
@@ -53,6 +71,8 @@ if (typeof module !== "undefined") {
   module.exports = {
     invalidate: invalidate,
     claimRegistration: claimRegistration,
-    eventKeyboardName: eventKeyboardName
+    eventKeyboardName: eventKeyboardName,
+    isRealKeyboard: isRealKeyboard,
+    anyLock: anyLock
   }
 }
