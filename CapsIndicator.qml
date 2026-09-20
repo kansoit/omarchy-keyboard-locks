@@ -8,29 +8,33 @@ import qs.Ui
 import qs.Commons
 import "CapsIndicatorModel.js" as CapsIndicatorModel
 
-// A single dot that lights up while Caps Lock is on. Reads the Lock modifier
-// of the keyboard being typed on, refreshed by a self-registered Caps_Lock
-// bind (see CapsIndicatorModel.js) and a light standby poll as a fallback.
+// Letters that light up while Caps Lock or Num Lock is on. Lock state is
+// aggregated across real keyboards, so one locked keyboard is enough to show
+// the corresponding indicator. Self-registered lock binds provide immediate
+// updates; a slower standby poll is the safety net.
 BarWidget {
   id: root
-  moduleName: "mero.caps-indicator"
+  moduleName: "kansoit.keyboard-locks"
 
   // Injected by the bar from the widget entry, shaped by manifest barWidget.schema.
   property var settings: ({})
 
-  // The Lock modifier of the keyboard the dot reads.
+  // Aggregated Lock modifiers across real keyboards on the seat.
   property bool capsLock: false
+  property bool numLock: false
 
   // Which keyboard the seat is actively typing on. Updated either by an
   // activelayout event (layout switch) or by detecting which keyboard toggled
-  // its capsLock between two successive polls — the board that just changed is
+  // its capsLock between successive reads — the board that just changed is
   // the one the user is pressing. Caps Lock is per-keyboard, so the dot must
   // read the right device when there is more than one on the seat.
   property string typedKeyboardName: ""
 
-  // Previous caps state per keyboard name, used to detect which keyboard just
-  // toggled between successive 500 ms standby polls.
-  property var _prevCapsState: ({})
+  // Previous lock state per keyboard name, used to identify which keyboard just
+  // toggled between successive standby reads.
+  property var _prevLockState: ({})
+  property var _lastTypedKeyboards: []
+  property int _refreshCount: 0
 
   // ---- Settings editing. Left-clicking the dot opens a small editor for the
   //      schema settings; changes are written back to shell.json the same way
@@ -59,7 +63,7 @@ BarWidget {
   }
 
   function resetSettings() {
-    root.commitSettings({ dotColor: "auto", dotSize: 6, hideWhenOff: false, dimOpacity: 35 })
+    root.commitSettings({ capsColor: "auto", numColor: "auto" })
   }
 
   // A widget slot routes clicks to the mounted item when no registered click
@@ -76,40 +80,40 @@ BarWidget {
   // root.settings directly (not through the setting() helper) because the
   // binding engine only tracks property dependencies it can see; a JavaScript
   // function call is opaque, so the dot would not update on change.
-  readonly property real dotDiameter: {
-    var d = root.settings ? Number(root.settings.dotSize) : NaN
-    return isNaN(d) || d <= 0 ? 6 : Math.min(d, 24)
-  }
-  readonly property color onColor: {
-    var c = root.settings && root.settings.dotColor !== undefined && root.settings.dotColor !== null
-      ? String(root.settings.dotColor).trim() : ""
+  readonly property color capsOnColor: {
+    var c = root.settings && root.settings.capsColor !== undefined && root.settings.capsColor !== null
+      ? String(root.settings.capsColor).trim()
+      : (root.settings && root.settings.dotColor !== undefined ? String(root.settings.dotColor).trim() : "")
     return c && c !== "auto" ? c : (root.bar ? root.bar.urgent : Color.urgent)
   }
-  readonly property color offColor: root.bar ? root.bar.barForeground : Color.foreground
-  readonly property real offOpacity: {
-    if (root.hideWhenOffValue) return 0
-    return root.dimOpacityValue / 100
+  readonly property color numOnColor: {
+    var c = root.settings && root.settings.numColor !== undefined && root.settings.numColor !== null
+      ? String(root.settings.numColor).trim()
+      : (root.settings && root.settings.dotColor !== undefined ? String(root.settings.dotColor).trim() : "")
+    return c && c !== "auto" ? c : (root.bar ? root.bar.urgent : Color.urgent)
   }
+  // Inactive letters deliberately use the normal bar foreground at full
+  // opacity. Their state is communicated by the selected active color only.
+  readonly property color offColor: root.bar ? root.bar.barForeground : Color.foreground
 
   // Editable equivalents the settings card binds against; these clamp the raw
   // entry values so a slider or swatch always reflects a valid state.
-  readonly property string dotColorValue: {
-    var c = root.settings ? root.settings.dotColor : undefined
+  readonly property string capsColorValue: {
+    var c = root.settings && root.settings.capsColor !== undefined
+      ? root.settings.capsColor : (root.settings ? root.settings.dotColor : undefined)
     return c === undefined || c === null ? "auto" : String(c)
   }
-  readonly property bool hideWhenOffValue: !!(root.settings && root.settings.hideWhenOff)
-  readonly property int dotDiameterValue: Math.round(root.dotDiameter)
-  readonly property int dimOpacityValue: {
-    var o = root.settings ? Number(root.settings.dimOpacity) : NaN
-    return Math.round(isNaN(o) ? 35 : Math.max(0, Math.min(100, o)))
+  readonly property string numColorValue: {
+    var c = root.settings && root.settings.numColor !== undefined
+      ? root.settings.numColor : (root.settings ? root.settings.dotColor : undefined)
+    return c === undefined || c === null ? "auto" : String(c)
   }
+  readonly property var colorChoices: ["auto", "#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#a855f7", "#ec4899"]
 
   // Hyprland reports more than keyboards as keyboards; buttons and the virtual
   // keyboard fcitx5 binds to inject never carry a Lock modifier worth reading.
   function typedKeyboards(list) {
-    return list.filter(function (k) {
-      return !/^(hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus)/.test(String(k.name || ""))
-    })
+    return list.filter(CapsIndicatorModel.isRealKeyboard)
   }
 
   // The seat also lists devices that are not keyboards (radio controls, hotkey
@@ -161,14 +165,13 @@ BarWidget {
       return
     }
     refreshPending = false
+    root._refreshCount++
     queryProc.running = true
   }
 
-  // Caps lock raises no Hyprland event at all: the bind that registered
-  // refresh() fires on every Caps_Lock press, but xkb releases the lock on key
-  // up while a bind only runs on the press. Re-read a few times at short
-  // intervals after the press to catch the release, so the dot goes out as the
-  // lock does instead of waiting for the standby poll.
+  // The lock bind fires on the key press, but xkb may publish the new modifier
+  // state just after that press. Re-read a few times at short intervals to
+  // catch the settled state without making the standby poll aggressive.
   function pressRefresh() {
     settleCurrent = 0
     settleTimer.start()
@@ -176,11 +179,14 @@ BarWidget {
   }
 
   property int settleCurrent: 0
-  readonly property int settleTicks: 5
+  readonly property int settleTicks: 8
 
   Timer {
     id: settleTimer
-    interval: 100
+    // Hyprland may publish the new xkb state just after the key bind fires.
+    // Check quickly during that short transition; the standby poll remains
+    // deliberately slow when no key was pressed.
+    interval: 30
     repeat: true
     onTriggered: {
       root.refresh()
@@ -189,38 +195,42 @@ BarWidget {
     }
   }
 
-  // The self-registered bind, added at startup and re-added on config reload:
-  // the same non-consuming Caps_Lock bind a manual setup would put in
-  // bindings.lua, pointed at this widget's own IPC handler. See
-  // CapsIndicatorModel.js for how instances share one registration.
+  // The self-registered binds, added at startup and re-added on config reload,
+  // point at this widget's own IPC handler. Registration is made idempotent by
+  // removing the plugin's lock-key bindings before adding one of each kind.
   readonly property string bindDescription: String(root.moduleName || "") + " refresh"
   property string bindCode: ""
 
-  function bindPresent(json) {
-    try {
-      const binds = JSON.parse(String(json || "[]"))
-      if (!Array.isArray(binds)) return false
-      return binds.some(function (b) {
-        return String(b.key || "") === "Caps_Lock" && String(b.description || "") === root.bindDescription
-      })
-    } catch (e) {
-      return false
-    }
-  }
-
   function addBind() {
-    root.bindCode = 'o.bind("Caps_Lock", "' + root.bindDescription + '", "omarchy-shell -q ' + root.moduleName + ' refresh", { locked = true, non_consuming = true, ignore_mods = true })'
+    var command = 'omarchy-shell -q ' + root.moduleName + ' refresh'
+    var options = '{ locked = true, non_consuming = true, ignore_mods = true }'
+    root.bindCode = 'hl.unbind("Caps_Lock"); hl.unbind("Num_Lock"); o.bind("Caps_Lock", "' + root.bindDescription + '", "' + command + '", ' + options + '); o.bind("Num_Lock", "' + root.bindDescription + '", "' + command + '", ' + options + ')'
     bindEvalProc.running = true
   }
 
   function ensureBindAdded() {
     if (!CapsIndicatorModel.claimRegistration()) return
-    bindCheckProc.running = true
+    root.addBind()
   }
 
   IpcHandler {
     target: root.moduleName
-    function refresh(): void { root.pressRefresh() }
+    // Only one per-monitor instance owns the IPC target. Forward the event to
+    // every live copy so secondary bars do not wait for the 2-second fallback
+    // poll before showing the new lock state.
+    function refresh(): void { root.broadcast("pressRefresh") }
+    function status(): string {
+      return JSON.stringify({
+        visible: root.visible,
+        capsLock: root.capsLock,
+        numLock: root.numLock,
+        typedKeyboardName: root.typedKeyboardName,
+        refreshCount: root._refreshCount,
+        queryRunning: queryProc.running,
+        standbyRunning: standbyTimer.running,
+        keyboards: root._lastTypedKeyboards
+      })
+    }
     function toggleCard(): void {
       if (settingsCard.open) settingsCard.closeCard()
       else settingsCard.openCard()
@@ -276,45 +286,46 @@ BarWidget {
         if (!Array.isArray(listed)) return
 
         const typed = root.typedKeyboards(listed)
+        root._lastTypedKeyboards = typed
 
-        // Detect which keyboard just toggled its caps lock between polls.
-        // The board that changed is the one the user is actually pressing,
-        // so use it as the authoritative source from now on.
+        // Detect which keyboard just toggled either lock between polls. Keep
+        // the name for the active-layout fallback, but aggregate the displayed
+        // state across all real keyboards.
         var changed = null
-        var prev = root._prevCapsState || {}
+        var prev = root._prevLockState || {}
         for (var i = 0; i < typed.length; i++) {
           var k = typed[i]
           if (!k || !k.name) continue
-          var now = k.capsLock === true
+          var nowCaps = k.capsLock === true
+          var nowNum = k.numLock === true
           var before = prev[k.name]
-          if (before !== undefined && before !== now) { changed = k; break }
+          if (before !== undefined
+              && (before.capsLock !== nowCaps || before.numLock !== nowNum)) {
+            changed = k
+            break
+          }
         }
 
-        // Build the new snapshot of per-keyboard caps states for the next poll.
+        // Build the new snapshot of per-keyboard lock states for the next poll.
         var next = {}
         for (var j = 0; j < typed.length; j++) {
           var kb2 = typed[j]
-          if (kb2 && kb2.name) next[kb2.name] = kb2.capsLock === true
+          if (kb2 && kb2.name) {
+            next[kb2.name] = {
+              capsLock: kb2.capsLock === true,
+              numLock: kb2.numLock === true
+            }
+          }
         }
-        root._prevCapsState = next
+        root._prevLockState = next
 
         // If a real keyboard toggled, that's the one being typed on.
         if (changed && !/hl-virtual-keyboard/.test(String(changed.name || "")))
           root.typedKeyboardName = changed.name
 
-        const kb = root.capsKeyboard(typed)
-        if (!kb) return
-        root.capsLock = kb.capsLock === true
+        root.capsLock = CapsIndicatorModel.anyLock(typed, "capsLock")
+        root.numLock = CapsIndicatorModel.anyLock(typed, "numLock")
       }
-    }
-  }
-
-  Process {
-    id: bindCheckProc
-    command: ["hyprctl", "-j", "binds"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.bindPresent(text) ? undefined : root.addBind()
     }
   }
 
@@ -338,41 +349,61 @@ BarWidget {
     }
   }
 
-  // The Lock modifier cannot be learned from a Hyprland event, and the bind
-  // only fires on press, so a light poll is the safety net that catches state
-  // changes the bind missed (it also covers systems where the eval bind fails).
+  // The bind is the fast path. The slower poll catches missed events, state
+  // changes made by another input tool, and systems where the eval bind fails.
   Timer {
     id: standbyTimer
-    interval: 500
+    interval: 2000
     running: root.visible
     repeat: true
     onTriggered: root.refresh()
   }
 
-  implicitWidth: root.dotDiameter + 12
+  implicitWidth: Style.space(34)
   implicitHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
 
   Item {
     id: dotSlot
-    width: root.dotDiameter + 12
+    width: root.implicitWidth
     height: root.implicitHeight
     anchors.centerIn: parent
 
-    Rectangle {
-      id: dot
-      width: root.dotDiameter
-      height: root.dotDiameter
-      radius: width / 2
-      anchors.centerIn: dotSlot
-      color: root.capsLock ? root.onColor : root.offColor
-      opacity: root.capsLock ? 1 : root.offOpacity
+    Row {
+      anchors.centerIn: parent
+      spacing: Style.space(8)
 
-      Behavior on opacity {
-        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+      Text {
+        width: Style.space(10)
+        height: root.implicitHeight
+        text: "C"
+        color: root.capsLock ? root.capsOnColor : root.offColor
+        opacity: 1
+        font.family: Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+
+        Behavior on color {
+          ColorAnimation { duration: 60 }
+        }
       }
 
-      Behavior on color {
-        ColorAnimation { duration: 140 }
+      Text {
+        width: Style.space(10)
+        height: root.implicitHeight
+        text: "N"
+        color: root.numLock ? root.numOnColor : root.offColor
+        opacity: 1
+        font.family: Style.font.family
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+
+        Behavior on color {
+          ColorAnimation { duration: 60 }
+        }
       }
     }
   }
@@ -394,7 +425,7 @@ BarWidget {
       left: true
       right: true
     }
-    WlrLayershell.namespace: "mero-caps-indicator-settings"
+    WlrLayershell.namespace: "kansoit-keyboard-locks-settings"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
@@ -403,7 +434,7 @@ BarWidget {
       if (root.bar && typeof root.bar.requestPopout === "function")
         root.bar.requestPopout(settingsCard)
       open = true
-      Qt.callLater(function() { colorField.forceActiveFocus() })
+      Qt.callLater(function() { capsColorField.forceActiveFocus() })
     }
 
     function closeCard() {
@@ -424,7 +455,7 @@ BarWidget {
 
     BorderSurface {
       id: card
-      width: Style.space(320)
+      width: Style.space(380)
       height: Math.min(settingsList.implicitHeight + card.contentTopInset + card.contentBottomInset,
                        settingsCard.height - Style.gapsOut * 2)
       anchors.centerIn: parent
@@ -449,7 +480,7 @@ BarWidget {
           Layout.fillWidth: true
 
           Text {
-            text: "Caps indicator"
+            text: "Lock indicators"
             color: Color.foreground
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
@@ -478,8 +509,8 @@ BarWidget {
             spacing: Style.spacing.lg
 
             Text {
-              Layout.minimumWidth: Style.space(108)
-              text: "Dot color"
+              Layout.minimumWidth: Style.space(120)
+              text: "Caps Lock color"
               color: Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
@@ -487,43 +518,35 @@ BarWidget {
             }
 
             RowLayout {
-              id: swatchRow
+              id: capsSwatchRow
               spacing: Style.spacing.sm
 
               Repeater {
-                model: [
-                  { value: "auto", color: root.bar ? root.bar.urgent : Color.urgent },
-                  { value: "#ef4444", color: "#ef4444" },
-                  { value: "#f59e0b", color: "#f59e0b" },
-                  { value: "#22c55e", color: "#22c55e" },
-                  { value: "#3b82f6", color: "#3b82f6" },
-                  { value: "#a855f7", color: "#a855f7" },
-                  { value: "#ec4899", color: "#ec4899" }
-                ]
+                model: root.colorChoices
 
                 Rectangle {
-                  required property var modelData
+                  required property string modelData
                   width: Style.space(20)
                   height: Style.space(20)
                   radius: width / 2
-                  color: modelData.color
+                  color: modelData === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : modelData
                   border.width: 1
                   border.color: Qt.color("black")
-                  opacity: root.dotColorValue === modelData.value ? 1 : 0.55
-                  scale: root.dotColorValue === modelData.value ? 1.15 : 1
+                  opacity: root.capsColorValue === modelData ? 1 : 0.55
+                  scale: root.capsColorValue === modelData ? 1.15 : 1
 
                   Rectangle {
                     anchors.fill: parent
                     radius: width / 2
                     color: "transparent"
                     border.width: 2
-                    border.color: root.dotColorValue === modelData.value ? Color.accent : "transparent"
-                    visible: root.dotColorValue === modelData.value
+                    border.color: root.capsColorValue === modelData ? Color.accent : "transparent"
+                    visible: root.capsColorValue === modelData
                   }
 
                   MouseArea {
                     anchors.fill: parent
-                    onClicked: root.commitSettings({ dotColor: modelData.value })
+                    onClicked: root.commitSettings({ capsColor: modelData })
                     hoverEnabled: true
                   }
                 }
@@ -541,20 +564,20 @@ BarWidget {
               radius: width / 2
               border.width: 1
               border.color: Qt.color("#55000000")
-              color: root.dotColorValue === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : root.dotColorValue
+              color: root.capsColorValue === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : root.capsColorValue
             }
 
             TextField {
-              id: colorField
+              id: capsColorField
               Layout.fillWidth: true
-              text: root.dotColorValue
+              text: root.capsColorValue
               placeholderText: "auto or #rrggbb"
               horizontalAlignment: Text.AlignHCenter
               onTextChanged: {
-                if (activeFocus && text !== root.dotColorValue)
-                  root.commitSettingsLocal({ dotColor: text })
+                if (activeFocus && text !== root.capsColorValue)
+                  root.commitSettingsLocal({ capsColor: text })
               }
-              onEditingFinished: root.commitSettings({ dotColor: text.trim() })
+              onEditingFinished: root.commitSettings({ capsColor: text.trim() })
 
               Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Escape) {
@@ -566,96 +589,94 @@ BarWidget {
           }
         }
 
-        RowLayout {
+        ColumnLayout {
           Layout.fillWidth: true
-          spacing: Style.spacing.lg
+          spacing: Style.spacing.controlGap
 
-          Text {
-            Layout.minimumWidth: Style.space(108)
-            text: "Dot size"
-            color: Color.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
-          }
-
-          Text {
-            Layout.preferredWidth: Style.space(28)
-            text: String(root.dotDiameterValue)
-            color: Color.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-            horizontalAlignment: Text.AlignRight
-          }
-
-          PanelSlider {
-            id: sizeSlider
+          RowLayout {
             Layout.fillWidth: true
-            bar: root.bar
-            minimum: 2
-            maximum: 24
-            step: 1
-            integer: true
-            value: root.dotDiameterValue
-            onMoved: function(v) { root.commitSettings({ dotSize: Math.round(v) }) }
+            spacing: Style.spacing.lg
+
+            Text {
+              Layout.minimumWidth: Style.space(120)
+              text: "Num Lock color"
+              color: Color.foreground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+            }
+
+            RowLayout {
+              spacing: Style.spacing.sm
+
+              Repeater {
+                model: root.colorChoices
+
+                Rectangle {
+                  required property string modelData
+                  width: Style.space(20)
+                  height: Style.space(20)
+                  radius: width / 2
+                  color: modelData === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : modelData
+                  border.width: 1
+                  border.color: Qt.color("black")
+                  opacity: root.numColorValue === modelData ? 1 : 0.55
+                  scale: root.numColorValue === modelData ? 1.15 : 1
+
+                  Rectangle {
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: 2
+                    border.color: root.numColorValue === modelData ? Color.accent : "transparent"
+                    visible: root.numColorValue === modelData
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    onClicked: root.commitSettings({ numColor: modelData })
+                    hoverEnabled: true
+                  }
+                }
+              }
+            }
           }
-        }
 
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.spacing.lg
-
-          Text {
-            Layout.minimumWidth: Style.space(108)
-            text: "Dim at rest (%)"
-            color: Color.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
-          }
-
-          Text {
-            Layout.preferredWidth: Style.space(28)
-            text: String(root.dimOpacityValue)
-            color: Color.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-            horizontalAlignment: Text.AlignRight
-          }
-
-          PanelSlider {
-            id: dimSlider
+          RowLayout {
             Layout.fillWidth: true
-            bar: root.bar
-            minimum: 0
-            maximum: 100
-            step: 1
-            integer: true
-            value: root.dimOpacityValue
-            onMoved: function(v) { root.commitSettings({ dimOpacity: Math.round(v) }) }
+            spacing: Style.spacing.sm
+
+            Rectangle {
+              Layout.preferredWidth: Style.space(20)
+              Layout.preferredHeight: Style.space(20)
+              radius: width / 2
+              border.width: 1
+              border.color: Qt.color("#55000000")
+              color: root.numColorValue === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : root.numColorValue
+            }
+
+            TextField {
+              id: numColorField
+              Layout.fillWidth: true
+              text: root.numColorValue
+              placeholderText: "auto or #rrggbb"
+              horizontalAlignment: Text.AlignHCenter
+              onTextChanged: {
+                if (activeFocus && text !== root.numColorValue)
+                  root.commitSettingsLocal({ numColor: text })
+              }
+              onEditingFinished: root.commitSettings({ numColor: text.trim() })
+
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  settingsCard.closeCard()
+                  event.accepted = true
+                }
+              }
+            }
           }
         }
 
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.spacing.lg
-
-          Text {
-            Layout.minimumWidth: Style.space(108)
-            text: "Hide when off"
-            color: Color.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
-          }
-
-          Item { Layout.fillWidth: true }
-
-          ToggleSwitch {
-            checked: root.hideWhenOffValue
-            onToggled: root.commitSettings({ hideWhenOff: !root.hideWhenOffValue })
-          }
-        }
       }
     }
   }
