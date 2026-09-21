@@ -21,14 +21,14 @@
         "key": "capsColor",
         "type": "string",
         "label": "Caps Lock color",
-        "description": "Color of the Caps Lock indicator. Leave \"auto\" to use the bar's active (urgent) color. Any CSS color, e.g. #ff4444.",
+        "description": "Color of the Caps Lock indicator. Leave \"auto\" to use the theme accent color. Any CSS color, e.g. #ff4444.",
         "defaultValue": "auto"
       },
       {
         "key": "numColor",
         "type": "string",
         "label": "Num Lock color",
-        "description": "Color of the Num Lock indicator. Leave \"auto\" to use the bar's active (urgent) color. Any CSS color, e.g. #ff4444.",
+        "description": "Color of the Num Lock indicator. Leave \"auto\" to use the theme accent color. Any CSS color, e.g. #ff4444.",
         "defaultValue": "auto"
       }
     ]

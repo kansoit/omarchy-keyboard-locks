@@ -84,13 +84,13 @@ BarWidget {
     var c = root.settings && root.settings.capsColor !== undefined && root.settings.capsColor !== null
       ? String(root.settings.capsColor).trim()
       : (root.settings && root.settings.dotColor !== undefined ? String(root.settings.dotColor).trim() : "")
-    return c && c !== "auto" ? c : (root.bar ? root.bar.urgent : Color.urgent)
+    return c && c !== "auto" ? c : Color.accent
   }
   readonly property color numOnColor: {
     var c = root.settings && root.settings.numColor !== undefined && root.settings.numColor !== null
       ? String(root.settings.numColor).trim()
       : (root.settings && root.settings.dotColor !== undefined ? String(root.settings.dotColor).trim() : "")
-    return c && c !== "auto" ? c : (root.bar ? root.bar.urgent : Color.urgent)
+    return c && c !== "auto" ? c : Color.accent
   }
   // Inactive letters deliberately use the normal bar foreground at full
   // opacity. Their state is communicated by the selected active color only.
@@ -529,7 +529,7 @@ BarWidget {
                   width: Style.space(20)
                   height: Style.space(20)
                   radius: width / 2
-                  color: modelData === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : modelData
+                  color: modelData === "auto" ? Color.accent : modelData
                   border.width: 1
                   border.color: Qt.color("black")
                   opacity: root.capsColorValue === modelData ? 1 : 0.55
@@ -564,7 +564,7 @@ BarWidget {
               radius: width / 2
               border.width: 1
               border.color: Qt.color("#55000000")
-              color: root.capsColorValue === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : root.capsColorValue
+              color: root.capsColorValue === "auto" ? Color.accent : root.capsColorValue
             }
 
             TextField {
@@ -617,7 +617,7 @@ BarWidget {
                   width: Style.space(20)
                   height: Style.space(20)
                   radius: width / 2
-                  color: modelData === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : modelData
+                  color: modelData === "auto" ? Color.accent : modelData
                   border.width: 1
                   border.color: Qt.color("black")
                   opacity: root.numColorValue === modelData ? 1 : 0.55
@@ -652,7 +652,7 @@ BarWidget {
               radius: width / 2
               border.width: 1
               border.color: Qt.color("#55000000")
-              color: root.numColorValue === "auto" ? (root.bar ? root.bar.urgent : Color.urgent) : root.numColorValue
+              color: root.numColorValue === "auto" ? Color.accent : root.numColorValue
             }
 
             TextField {
