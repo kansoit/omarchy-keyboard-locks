@@ -45,8 +45,8 @@ All settings are optional and come with the defaults below. Change them in the b
 
 | Key          | Type    | Default | Description |
 | ------------ | ------- | ------- | ----------- |
-| `capsColor`  | string  | `auto`  | Caps Lock letter color. `auto` uses the bar's active (urgent) color. Any CSS color, e.g. `#ff4444`. |
-| `numColor`   | string  | `auto`  | Num Lock letter color. `auto` uses the bar's active (urgent) color. Any CSS color, e.g. `#44aaff`. |
+| `capsColor`  | string  | `auto`  | Caps Lock letter color. `auto` uses the active theme accent color. Any CSS color, e.g. `#ff4444`. |
+| `numColor`   | string  | `auto`  | Num Lock letter color. `auto` uses the active theme accent color. Any CSS color, e.g. `#44aaff`. |
 
 Example inline settings on the bar entry:
 
