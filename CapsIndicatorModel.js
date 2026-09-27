@@ -43,10 +43,14 @@ function eventKeyboardName(event) {
 
 // Hyprland may classify receiver endpoints, mice and audio controls as
 // keyboards. Keep real typing devices while dropping those false positives.
+// Some laptop firmware (seen on Acer models) also exposes pseudo-keyboards
+// for wireless-radio toggles, WMI hotkey arrays, and VM keyboard passthrough;
+// these never receive real key events and default to numLock=true forever,
+// which made the Num Lock indicator get stuck on.
 function isRealKeyboard(keyboard) {
   var name = String(keyboard && keyboard.name || "").toLowerCase()
   if (!name) return false
-  if (/hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus/.test(name)) return false
+  if (/hl-virtual-keyboard|power-button|sleep-button|lid-switch|video-bus|radio-control|wmi-hotkeys|passthrough/.test(name)) return false
   if (/mouse|touchpad|trackpad|m585|m590|headphone|audio|avrcp|camera|consumer-control|plantronics|ideapad-extra-buttons|sof-hda-dsp|bose/.test(name)) return false
   return true
 }
